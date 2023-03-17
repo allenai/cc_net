@@ -11,6 +11,7 @@ filter the documents.
 The pipeline parameters are described in the `Config` class.
 """
 
+import os
 import hashlib
 import json
 import time
@@ -20,6 +21,7 @@ from collections import defaultdict
 from itertools import repeat
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
+import re
 
 import func_argparse
 
@@ -27,6 +29,8 @@ import func_argparse
 from cc_net import dedup, execution, jsonql, minify, perplexity, process_wet_file
 from cc_net import regroup as regroup_module
 from cc_net import split_by_lang
+from cc_net import s3util
+from cc_net import ai2_format
 from cc_net.execution import Executor
 
 # Constant
@@ -52,6 +56,8 @@ class Config(NamedTuple):
     config_name
     dump: CC dump id
     output_dir: working directory
+    s3_output_path: Upload outputs to S3 under this prefix
+    s3_input_path: Fetch inputs from S3 under this prefix
     mined_dir: name of the destination folder, full path will be {ouput_dir}/{mined_dir}/{dump_id}
     execution: chose how to parallelize the execution
     num_shards: number of shards to split the dump
@@ -67,11 +73,12 @@ class Config(NamedTuple):
     lm_languages: only use LMs for the following languages
     cutoff: cutoff file to use for split in head/middle/tail
     mine_num_processes: number of processes to use for mining
+    regroup: regroup shard outputs into consolidated files
     target_size: size of finals files produce during `regroup` stage
     cleanup_after_regroup: delete intermediary files after regroup
     task_parallelism: max number of task to run in parallel for core pipeline steps
     hash_parallelism: max number of tasks when computing hashes
-    move_parallelism: max number of tasks when moving (consolidating) segments
+    regroup_parallelism: max number of tasks when regrouping segments
     pipeline: restricts the mining pipeline to the given steps. Order is important !
     experiments: (HACK) enable specific experiments in the code
     """
@@ -79,6 +86,8 @@ class Config(NamedTuple):
     config_name: str = "base"
     dump: str = "2017-51"
     output_dir: Path = Path("data")
+    s3_output_path: Optional[str] = None
+    s3_input_path: Optional[str] = None
     mined_dir: str = "mined"
     execution: str = "auto"
     num_shards: int = 1600
@@ -96,10 +105,11 @@ class Config(NamedTuple):
     lm_languages: Optional[Sequence[str]] = None
     mine_num_processes: int = 16
     target_size: str = "4G"
+    regroup: bool = True
     cleanup_after_regroup: bool = True
     task_parallelism: int = -1
     hash_parallelism: int = -1
-    move_parallelism: int = -1
+    regroup_parallelism: int = -1
     pipeline: Sequence[str] = DEFAULT_PIPELINE
     experiments: Sequence[str] = []
     cache_dir: Optional[Path] = None
@@ -151,7 +161,7 @@ class Config(NamedTuple):
 
     def num_hash_files_per_shard(self, gb_per_file: float):
         if self.hash_max_ram_gb > 0:
-            return 1 + self.hash_max_ram_gb // gb_per_file
+            return int(1 + self.hash_max_ram_gb // gb_per_file)
         return self.hash_in_mem
 
     def get_lm_languages(self) -> Sequence[str]:
@@ -170,6 +180,27 @@ class Config(NamedTuple):
         if self.will_split and not regroup:
             return self.output_dir / f"{self.mined_dir}_split" / self.dump
         return self.output_dir / self.mined_dir / self.dump
+
+    def input_exists(self, path: Path, s3_path: Optional[str]) -> bool:
+        if s3_path:
+            if s3util.exists(f"{s3_path}/{path.relative_to(self.output_dir)}"):
+                return True
+        return path.exists()
+
+    def fetch_input(self, path: Path):
+        if not path.exists() and self.input_exists(path, self.s3_input_path):
+            print(f"Downloading {path} from {self.s3_input_path}")
+            s3util.download(f"{self.s3_input_path}/{path.relative_to(self.output_dir)}", path)
+
+    def upload_output(self, output: Path):
+        if self.s3_output_path:
+            s3util.upload(output, f"{self.s3_output_path}/{output.relative_to(self.output_dir)}")
+            print(f"Uploading {output} to {self.s3_output_path}")
+            index = output.parent / (output.name + ".index")
+            if index.exists():
+                s3util.upload(index, f"{self.s3_output_path}/{index.relative_to(self.output_dir)}")
+
+
 
 
 BASE_CONFIG = Config()
@@ -262,6 +293,8 @@ def hashes(conf: Config) -> List[Path]:
 
     hashes_dir = conf.output_dir / "hashes" / conf.dump
     outputs = [hashes_dir / f"{shard:04d}.bin" for shard in range(conf.num_shards)]
+    for o in outputs:
+        conf.fetch_input(o)
     missing_outputs = [(shard, o) for shard, o in enumerate(outputs) if not o.exists()]
 
     if not missing_outputs:
@@ -286,6 +319,7 @@ def _hashes_shard(conf: Config, shard: int, output: Path):
         inputs=conf.get_cc_shard(shard),
     )
     finalize(tmp_output, output)
+    conf.upload_output(output)
     return f"Hashed {output}"
 
 
@@ -320,6 +354,8 @@ def mine(conf: Config) -> List[Path]:
         mem_gb = int(max(HASHES_IN_MEM) * 1.2)
         timeout_hour = 8
 
+    for o in outputs:
+        conf.fetch_input(o)
     missing_outputs = [(shard, o) for shard, o in enumerate(outputs) if not o.exists()]
 
     if "mini_again" in conf.experiments:
@@ -342,15 +378,24 @@ def mine(conf: Config) -> List[Path]:
     )
 
     # Compute hashes firsts.
-    if "dedup" in conf.pipeline:
+    if "dedup" in conf.pipeline or "hashes" in conf.pipeline:
         hash_files = hashes(conf)
-        shards_per_group = conf.num_hash_files_per_shard(2.5)
+        file_size = max(os.path.getsize(str(f)) for f in hash_files)
+        ram_per_disk = 3.0 # File of size N takes consumes about 3N in RAM
+        gb_per_file = file_size * ram_per_disk / 1024**3
+        print(f"Typical file size is {file_size / 1024**2:.0f}MB, requiring {gb_per_file:.1f}GB RAM ")
+        shards_per_group = conf.num_hash_files_per_shard(gb_per_file)
+        print(f"Deduping with {shards_per_group} hash files per shard")
         hashes_groups = list(jsonql.grouper(hash_files, shards_per_group))
         hashes_files: Iterable[List[Path]] = [
             hashes_groups[shard // shards_per_group] for shard, o in missing_outputs
         ]
     else:
         hashes_files = repeat([])
+
+    # "hashes" == compute hashes, nothing else
+    if "hashes" in conf.pipeline:
+        return []
 
     ex(_mine_shard, repeat(conf), hashes_files, *_transpose(missing_outputs))
 
@@ -434,12 +479,21 @@ def _mine_shard(conf: Config, hashes: List[Path], shard: int, output: Path) -> s
 
     steps["minify"] = minify.Minifier()
 
-    pattern = str(tmp_output / "{language}_{bucket}.json.gz")
-    steps["split_by_lang"] = jsonql.split(pattern=str(pattern), mkdir=True)
-
-    steps["split_by_segment"] = jsonql.split(
-        split_fn=lambda doc: _get_segment(tmp_output, doc), mkdir=True
+    split_by_language_fn = lambda doc: str(tmp_output / f"{doc['language']}_{doc['bucket']}.json.gz")
+    if "ai2_format" in conf.pipeline:
+        split_by_language_fn = lambda doc: str(tmp_output / f"{doc['metadata']['language']}_{doc['metadata']['bucket']}.json.gz")
+    steps["split_by_lang"] = jsonql.split(
+        split_fn=split_by_language_fn, mkdir=True
     )
+
+    split_by_segment_fn = lambda doc: _get_segment(tmp_output, doc)
+    if "ai2_format" in conf.pipeline:
+        split_by_segment_fn = lambda doc: _get_segment(tmp_output, doc["metadata"])
+    steps["split_by_segment"] = jsonql.split(
+        split_fn=split_by_segment_fn, mkdir=True
+    )
+
+    steps["ai2_format"] = ai2_format.Ai2Formatter()
 
     pipeline = filter(None, (steps[s] for s in conf.pipeline))
 
@@ -452,6 +506,7 @@ def _mine_shard(conf: Config, hashes: List[Path], shard: int, output: Path) -> s
         output=tmp_output if not conf.will_split else None,
     )
     finalize(tmp_output, output)
+    conf.upload_output(output)
     return f"Mined {output}"
 
 
@@ -509,7 +564,7 @@ def regroup(conf: Config, all_dirs: List[Path]) -> Path:
             f"shards ({n_existing} already there).",
         )
 
-    ex = conf.get_executor(f"regroup_{conf.dump}", mem_gb=1, timeout_hour=12, cpus=2, parallelism=conf.move_parallelism)
+    ex = conf.get_executor(f"regroup_{conf.dump}", mem_gb=1, timeout_hour=12, cpus=2, parallelism=conf.regroup_parallelism)
     ex(_regroup, repeat(conf), inputs, outputs)
 
     return regroup_dir
@@ -520,6 +575,7 @@ def _regroup(conf: Config, inputs: List[Path], output: Path) -> str:
     regroup_module.fast_reshard(
         inputs, output, tmp=tmp(output), rm_original=conf.cleanup_after_regroup
     )
+    conf.upload_output(output)
     return f"Regrouped {output}"
 
 
@@ -534,7 +590,7 @@ def move_segments(conf: Config, all_dirs: Sequence[Path]) -> Path:
 
     regroup_dir.parent.mkdir(exist_ok=True)
     regroup_dir.mkdir(exist_ok=True)
-    ex = conf.get_executor(f"moveseg_{conf.dump}", mem_gb=1, timeout_hour=1, cpus=2, parallelism=conf.move_parallelism)
+    ex = conf.get_executor(f"moveseg_{conf.dump}", mem_gb=1, timeout_hour=1, cpus=2, parallelism=conf.regroup_parallelism)
 
     def _move_segments(subdir: Path, regroup_dir: Path) -> str:
         n = 0
@@ -643,7 +699,7 @@ def main(config: str = "base", **config_as_dict: Any) -> None:
     print(f"Will run cc_net.mine.main with the following config:", conf)
 
     all_files = mine(conf)
-    if conf.will_split:
+    if conf.regroup and conf.will_split:
         assert all_files
         assert all(d.is_dir() for d in all_files)
         all_dirs = all_files
