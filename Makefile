@@ -45,7 +45,6 @@ build-tools:
 	sudo apt install --yes unzip pip awscli
 
 ai2-setup: build-tools install
-	aws configure
 	pip install cc_net[getpy]
 	make dl_lm lang=en
 	make dl_lm lang=ru

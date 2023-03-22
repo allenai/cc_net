@@ -46,8 +46,9 @@ import numpy as np
 import psutil  # type: ignore
 import requests
 from typing_extensions import Protocol
-import boto3
-import botocore
+
+from cc_net import s3util
+from cc_net.s3util import RetryableDownloadFailure
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,14 +62,6 @@ FilterFn = Callable[[dict], bool]
 FileDescriptor = Union[Path, List[Path], str]
 WritableFileLike = Union[FileDescriptor, TextIO, "SimpleIO", None]
 ReadableFileLike = Union[Iterable[str], FileDescriptor, None]
-
-s3_client = None
-
-
-class RetryableDownloadFailure(Exception):
-    def __init__(self, err: Exception):
-        self.err = err
-
 
 def io_parser():
     """Parser shared by all commands to get input/output files."""
@@ -946,7 +939,7 @@ def open_read(filename: ReadableFileLike) -> Iterable[str]:
             return _yield_from(filename)
         filename = tp.cast(Path, filename[0])
     if isinstance(filename, str):
-        if filename.startswith("http://") or filename.startswith("https://"):
+        if filename.startswith("http://") or filename.startswith("https://") or filename.startswith("s3://"):
             return open_remote_file(filename)
 
         filename = Path(filename)
@@ -1117,7 +1110,7 @@ def get_content(primary_url: str, mirror_urls: List[str] = [], n_retry: int = 3)
 
 def try_get_content(url: str) -> bytes:
     if url.startswith("s3://"):
-        return try_get_s3_content(url)
+        return s3util.try_get_content(url)
     return try_get_http_content(url)
 
 
@@ -1132,27 +1125,6 @@ def try_get_http_content(url: str) -> bytes:
             raise e
         raise RetryableDownloadFailure(e)
     return r.content
-
-
-def try_get_s3_content(url: str) -> bytes:
-    global s3_client
-    if not s3_client:
-        s3_client = boto3.client("s3")
-    path = re.search("s3://([^/]*)/(.*)", url)
-    bucket = path.group(1)
-    key = path.group(2)
-    try:
-        buffer = io.BytesIO()
-        s3_client.download_fileobj(Bucket=bucket,
-                                   Key=key,
-                                   Fileobj=buffer,
-                                   Config=boto3.s3.transfer.TransferConfig(use_threads=False))
-    except botocore.exceptions.ClientError as e:
-        message = e.args[0] if isinstance(e.args[0], str) else ""
-        if not "SlowDown" in message:
-            raise e
-        raise RetryableDownloadFailure(e)
-    return buffer.getvalue()
 
 def open_remote_file(url: str, cache: Path = None, mirror_urls: List[str] = []) -> Iterable[str]:
     """Download the files at the given url to memory and opens it as a file.

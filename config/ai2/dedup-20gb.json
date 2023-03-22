@@ -1,0 +1,9 @@
+{
+  "config_name": "dedup-20gb",
+  "s3_input_path": "s3://ai2-llm/pretraining-data/sources/common-crawl/raw",
+  "pipeline": ["dedup", "lid", "keep_lang", "sp", "lm", "pp_bucket", "drop", "ai2_format","split_by_lang"],
+  "regroup": false,
+  "hash_max_ram_gb": 20,
+  "mine_num_processes": 1,
+  "task_parallelism": 35
+}
