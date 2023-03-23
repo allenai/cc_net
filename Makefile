@@ -50,6 +50,14 @@ ai2-setup: build-tools install
 	make dl_lm lang=ru
 	make dl_lm lang=zh
 
+hashes:
+	python3 -u -m cc_net --config config/ai2/hashes.json --dump $(dump) --hash_parallelism $(threads)| tee -a $(dump)-hashes.log
+
+transform:
+	python3 -u -m cc_net --config config/ai2/dedup-20gb.json --dump $(dump) --task_parallelism $(threads) | tee -a $(dump)-dedup.log
+
+regroup:
+	python3 -u -m cc_net --config config/ai2/regroup.json --dump $(dump) --regroup_parallelism $(threads) | tee -a $(dump)-dedup.log
 
 install: bin/lid.bin $(KENLM) $(SPM_TRAIN)
 	# Installs dependencies.
