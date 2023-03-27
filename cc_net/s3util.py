@@ -37,7 +37,11 @@ def exists(url: str) -> bool:
             return False
 
 def upload(path: Path, url: str):
-    bucket,key = _parse_url(url)
+    if path.is_dir():
+        for f in path.iterdir():
+            upload(f, f"{url}/{f.name}")
+        return
+    bucket, key = _parse_url(url)
     with open(path, "rb") as data:
         s3_client.upload_fileobj(data, bucket, key)
 
