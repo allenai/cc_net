@@ -54,8 +54,8 @@ hashes:
 	python3 -u -m cc_net --config config/ai2/hashes.json --dump $(dump) --hash_parallelism $(threads)| tee -a $(dump)-hashes.log
 
 cc-news-hashes:
-	log_file := `echo $(dump) | tr '/' '_'`-hashes.log
-	python3 -u -m cc_net --config config/ai2/cc-news-hashes.json --dump $(dump) --hash_parallelism $(threads)| tee -a $(log_file)
+	LOG_FILE=`echo $(dump) | tr '/' '_'`-hashes.log
+	python3 -u -m cc_net --config config/ai2/cc-news-hashes.json --dump $(dump) --hash_parallelism $(threads)| tee -a $$LOG_FILE
 
 version=v0
 transform:
