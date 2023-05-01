@@ -53,6 +53,9 @@ ai2-setup: build-tools install
 hashes:
 	python3 -u -m cc_net --config config/ai2/hashes.json --dump $(dump) --hash_parallelism $(threads)| tee -a $(dump)-hashes.log
 
+cc-news-hashes:
+	python3 -u -m cc_net --config config/ai2/cc-news-hashes.json --dump $(dump) --hash_parallelism $(threads)| tee -a $(dump)-hashes.log
+
 version=v0
 transform:
 	python3 -u -m cc_net --config config/ai2/transform-$(version).json --dump $(dump) --task_parallelism $(threads) | tee -a $(dump)-transform.log
