@@ -54,6 +54,7 @@ hashes:
 	python3 -u -m cc_net --config config/ai2/hashes.json --dump $(dump) --hash_parallelism $(threads)| tee -a $(dump)-hashes.log
 
 cc-news-hashes:
+	mkdir -p $(dump)
 	python3 -u -m cc_net --config config/ai2/cc-news-hashes.json --dump $(dump) --hash_parallelism $(threads)| tee -a $(dump)-hashes.log
 
 version=v0
