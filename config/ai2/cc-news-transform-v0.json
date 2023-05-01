@@ -6,5 +6,5 @@
   "regroup": false,
   "hash_max_ram_gb": 20,
   "mine_num_processes": 1,
-  "task_parallelism": 35
+  "task_parallelism": 10
 }

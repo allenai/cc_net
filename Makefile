@@ -61,7 +61,7 @@ transform:
 	python3 -u -m cc_net --config config/ai2/transform-$(version).json --dump $(dump) --task_parallelism $(threads) | tee -a $(dump)-transform.log
 
 cc-news-transform:
-	python3 -u -m cc_net --config config/ai2/cc-news-transform-$(version).json --dump $(dump) --task_parallelism $(threads) | tee -a $(dump)-transform.log
+	python3 -u -m cc_net --config config/ai2/cc-news-transform-$(version).json --dump $(dump) --task_parallelism $(threads) | tee -a $$(echo $(dump) | tr '/' '_')-transform.log
 
 regroup:
 	python3 -u -m cc_net --config config/ai2/regroup.json --dump $(dump) --regroup_parallelism $(threads) | tee -a $(dump)-regroup.log
