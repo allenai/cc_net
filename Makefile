@@ -54,12 +54,14 @@ hashes:
 	python3 -u -m cc_net --config config/ai2/hashes.json --dump $(dump) --hash_parallelism $(threads)| tee -a $(dump)-hashes.log
 
 cc-news-hashes:
-	LOG_FILE=`echo $(dump) | tr '/' '_'`-hashes.log
-	python3 -u -m cc_net --config config/ai2/cc-news-hashes.json --dump $(dump) --hash_parallelism $(threads)| tee -a $$LOG_FILE
+	python3 -u -m cc_net --config config/ai2/cc-news-hashes.json --dump $(dump) | tee -a $$(echo $(dump) | tr '/' '_')-hashes.log
 
 version=v0
 transform:
 	python3 -u -m cc_net --config config/ai2/transform-$(version).json --dump $(dump) --task_parallelism $(threads) | tee -a $(dump)-transform.log
+
+cc-news-transform:
+	python3 -u -m cc_net --config config/ai2/cc-news-transform-$(version).json --dump $(dump) --task_parallelism $(threads) | tee -a $(dump)-transform.log
 
 regroup:
 	python3 -u -m cc_net --config config/ai2/regroup.json --dump $(dump) --regroup_parallelism $(threads) | tee -a $(dump)-regroup.log
