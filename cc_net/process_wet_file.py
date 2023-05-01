@@ -20,15 +20,22 @@ from bs4 import BeautifulSoup  # type: ignore
 
 from cc_net import jsonql
 
-WET_URL_ROOT = "https://data.commoncrawl.org"
-WET_URL_MIRROR_ROOTS = ["s3://commoncrawl"]
+WET_URL_ROOTS = ["https://data.commoncrawl.org", "s3://commoncrawl"]
+CC_NEWS_WET_URL_ROOT = "s3://ai2-llm"
 
 
 logger = logging.getLogger(__name__)
 
 
 def cc_wet_paths_url(dump_id: str) -> str:
-    return "/".join([WET_URL_ROOT, "crawl-data", "CC-MAIN-" + dump_id, "wet.paths.gz"])
+    if "CC-NEWS" in dump_id:
+        return "/".join((CC_NEWS_WET_URL_ROOT, "pretraining-data/sources/cc-news/raw/wet", dump_id, "wet.paths.gz"))
+    return "/".join([WET_URL_ROOTS[0], "crawl-data", "CC-MAIN-" + dump_id, "wet.paths.gz"])
+
+def segment_urls(segment: str) -> List[str]:
+    if "CC-NEWS" in segment:
+        return ["/".join((CC_NEWS_WET_URL_ROOT, segment))]
+    return ["/".join((root, segment)) for root in WET_URL_ROOTS]
 
 
 @functools.lru_cache()
@@ -176,15 +183,16 @@ class CCSegmentsReader(Iterable[dict]):
         self.retrieved_segments = 0
 
     def segment_url(self, segment: str):
-        return "/".join((WET_URL_ROOT, segment))
+        return "/".join((WET_URL_ROOTS[0], segment))
 
     @property
     def segments(self) -> Sequence[str]:
         return self._segments
 
     def open_segment(self, segment: str) -> Iterable[str]:
-        url = "/".join((WET_URL_ROOT, segment))
-        mirror_urls = ["/".join((root, segment)) for root in WET_URL_MIRROR_ROOTS]
+        urls = segment_urls(segment)
+        url = urls[0]
+        mirror_urls = urls[1:]
         file: Optional[Path] = None
         if self.cache_dir:
             file = self.cache_dir / segment.split("/")[-1]

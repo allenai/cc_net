@@ -40,9 +40,9 @@ SHELL=/bin/bash
 .DELETE_ON_ERROR:
 
 build-tools:
-	sudo apt install --yes cmake
-	sudo apt install --yes build-essential libboost-system-dev libboost-thread-dev libboost-program-options-dev libboost-test-dev libboost-test-dev
-	sudo apt install --yes unzip pip awscli
+	sudo apt-get install --yes cmake
+	sudo apt-get install --yes build-essential libboost-system-dev libboost-thread-dev libboost-program-options-dev libboost-test-dev libboost-test-dev
+	sudo apt-get install --yes unzip pip awscli
 
 ai2-setup: build-tools install
 	pip install cc_net[getpy]
