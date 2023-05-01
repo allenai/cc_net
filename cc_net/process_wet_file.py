@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 
 
 def cc_wet_paths_url(dump_id: str) -> str:
-    if "CC-NEWS" in dump_id:
+    if dump_id.startswith("CC-NEWS/"):
+        dump_id = dump_id.replace("CC-NEWS/", "")
         return "/".join((CC_NEWS_WET_URL_ROOT, "pretraining-data/sources/cc-news/raw/wet", dump_id, "wet.paths.gz"))
     return "/".join([WET_URL_ROOTS[0], "crawl-data", "CC-MAIN-" + dump_id, "wet.paths.gz"])
 
