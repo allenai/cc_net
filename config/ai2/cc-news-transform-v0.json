@@ -1,5 +1,6 @@
 {
   "config_name": "dedup-20gb",
+  "num_shards": 10,
   "s3_input_path": "s3://ai2-llm/pretraining-data/sources/cc-news/raw",
   "s3_output_path": "s3://ai2-llm/pretraining-data/sources/cc-news/v0/documents",
   "pipeline": ["dedup", "lid", "keep_lang", "sp", "lm", "pp_bucket", "drop", "ai2_format","split_by_lang"],
