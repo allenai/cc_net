@@ -1,5 +1,6 @@
 {
   "config_name": "hashes",
+  "num_shards": 10,
   "pipeline": ["hashes"],
   "s3_output_path": "s3://ai2-llm/pretraining-data/sources/cc-news/raw",
   "mine_num_processes": 1,
